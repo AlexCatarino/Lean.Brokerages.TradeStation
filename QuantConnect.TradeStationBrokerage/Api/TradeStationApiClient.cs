@@ -40,6 +40,12 @@ namespace QuantConnect.Brokerages.TradeStation.Api;
 public class TradeStationApiClient : IDisposable
 {
     /// <summary>
+    /// Event raised when the API reports a condition the user should be aware of, such as a market
+    /// data request refused for lack of an entitlement.
+    /// </summary>
+    public event EventHandler<BrokerageMessageEvent> Message;
+
+    /// <summary>
     /// Maximum number of bars that can be requested in a single call to <see cref="GetBars(string, TradeStationUnitTimeIntervalType, DateTime, DateTime)"/>.
     /// </summary>
     private const int MaxBars = 57500;
@@ -536,7 +542,15 @@ public class TradeStationApiClient : IDisposable
 
             if (!string.IsNullOrEmpty(result.Error))
             {
-                throw new Exception($"[{result.Error}] {result.Message}");
+                // TradeStation answers with HTTP 200 and an error body when the bars cannot be served,
+                // for instance "Not entitled to data for this symbol" when the account has no market
+                // data entitlement for the symbol's exchange. Surface it so the user learns why the
+                // history request came back empty, appending the symbol the error refers to.
+                Log.Error($"{nameof(TradeStationApiClient)}.{nameof(GetBarsAsync)}: Failed to retrieve bars for symbol '{symbol}' " +
+                    $"with time interval '{unitOfTime}'. Start: {firstDate}, End: {lastDate}. [{result.Error}] {result.Message}");
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, result.Error,
+                    $"{result.Message}: {symbol}"));
+                yield break;
             }
 
             bars = result.Bars;
@@ -776,6 +790,15 @@ public class TradeStationApiClient : IDisposable
             }
             yield return jsonLine;
         }
+    }
+
+    /// <summary>
+    /// Raises the <see cref="Message"/> event.
+    /// </summary>
+    /// <param name="brokerageMessageEvent">The message to report.</param>
+    private void OnMessage(BrokerageMessageEvent brokerageMessageEvent)
+    {
+        Message?.Invoke(this, brokerageMessageEvent);
     }
 
     /// <summary>

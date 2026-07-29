@@ -15,6 +15,7 @@
 
 using System;
 using System.IO;
+using System.Reflection;
 using System.Linq;
 using Newtonsoft.Json;
 using NUnit.Framework;
@@ -75,6 +76,47 @@ namespace QuantConnect.Brokerages.TradeStation.Tests
             Assert.IsNull(res.Bars);
             Assert.That(res.Error, Is.EqualTo("Failed"));
             Assert.That(res.Message, Is.EqualTo("Not entitled to data for this symbol"));
+        }
+
+        [Test]
+        public void DeserializeStreamQuoteErrorFrame()
+        {
+            // The streaming quotes endpoint reports a per symbol failure as a regular frame carrying
+            // only the symbol and the error, and then stops sending data for that symbol.
+            var jsonResponse = @"{
+                ""Symbol"": ""VXMQ26"",
+                ""Error"": ""FAILED, NOT ENTITLED""
+            }";
+
+            var res = JsonConvert.DeserializeObject<Quote>(jsonResponse);
+
+            Assert.That(res.Symbol, Is.EqualTo("VXMQ26"));
+            Assert.That(res.Error, Is.EqualTo("FAILED, NOT ENTITLED"));
+            Assert.IsNull(res.Bid);
+            Assert.IsNull(res.Ask);
+            Assert.IsNull(res.Last);
+        }
+
+        [Test]
+        public void StreamQuoteErrorFrameRaisesBrokerageMessageOncePerSymbol()
+        {
+            using var brokerage = TestSetup.CreateBrokerage(null, null);
+
+            var messages = new List<BrokerageMessageEvent>();
+            brokerage.Message += (_, message) => messages.Add(message);
+
+            var handleQuoteEvents = typeof(TradeStationBrokerage)
+                .GetMethod("HandleQuoteEvents", BindingFlags.NonPublic | BindingFlags.Instance);
+
+            var errorQuote = new Quote { Symbol = "VXMQ26", Error = "FAILED, NOT ENTITLED" };
+
+            handleQuoteEvents.Invoke(brokerage, [errorQuote]);
+            // the stream is re-established on reconnection: the same failing symbol must not spam the user
+            handleQuoteEvents.Invoke(brokerage, [errorQuote]);
+
+            Assert.That(messages.Count, Is.EqualTo(1));
+            Assert.That(messages[0].Type, Is.EqualTo(BrokerageMessageType.Error));
+            Assert.That(messages[0].Message, Is.EqualTo("FAILED, NOT ENTITLED for this symbol: VXMQ26"));
         }
 
         [TestCase(@"{ ""Orders"":[ { ""Legs"": [ { ""BuyOrSell"": ""BUY"" } ] } ],""Errors"":[] }", TradeStationTradeActionType.Buy)]

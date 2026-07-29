@@ -328,6 +328,8 @@ public partial class TradeStationBrokerage : Brokerage
         _priceMapper = new PriceMapper();
         _messageHandler = new(HandleTradeStationMessage, ConcurrencyEnabled);
 
+        _tradeStationApiClient.Message += OnBrokerageMessageEventHandler;
+
         _aggregator = Composer.Instance.GetPart<IDataAggregator>();
         if (_aggregator == null)
         {
@@ -1544,6 +1546,10 @@ public partial class TradeStationBrokerage : Brokerage
     /// </summary>
     public override void Dispose()
     {
+        if (_tradeStationApiClient != null)
+        {
+            _tradeStationApiClient.Message -= OnBrokerageMessageEventHandler;
+        }
         _aggregator.DisposeSafely();
         _tradeStationApiClient.DisposeSafely();
     }
