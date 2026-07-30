@@ -65,6 +65,12 @@ public partial class TradeStationBrokerage : IDataQueueHandler
     private readonly ConcurrentDictionary<string, bool> _symbolsMarketDataErrorReported = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// Caches whether market data can be received for a brokerage symbol, since LEAN subscribes the
+    /// same symbol once per tick type and entitlements do not change during a session.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, bool> _marketDataAvailabilityBySymbol = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Aggregates ticks and bars based on given subscriptions.
     /// </summary>
     protected IDataAggregator _aggregator;
@@ -127,14 +133,17 @@ public partial class TradeStationBrokerage : IDataQueueHandler
     /// Subscribes to updates for the specified collection of symbols.
     /// </summary>
     /// <param name="symbols">A collection of symbols to subscribe to.</param>
-    /// <returns>Always, Returns <c>true</c> if the subscription was successful</returns>
+    /// <returns><c>true</c> if the subscription was successful; <c>false</c> if the market data cannot be received</returns>
     private bool Subscribe(IEnumerable<Symbol> symbols)
     {
-        var subscribedBrokerageSymbolsQueue = new Queue<string>();
-        foreach (var brokerageSymbol in symbols.Select(_symbolMapper.GetBrokerageSymbol))
+        var brokerageSymbols = symbols.Select(_symbolMapper.GetBrokerageSymbol).ToList();
+
+        if (!CanReceiveMarketData(brokerageSymbols))
         {
-            subscribedBrokerageSymbolsQueue.Enqueue(brokerageSymbol);
+            return false;
         }
+
+        var subscribedBrokerageSymbolsQueue = new Queue<string>(brokerageSymbols);
 
         foreach (var quoteStream in _quoteStreamManagers)
         {
@@ -153,6 +162,55 @@ public partial class TradeStationBrokerage : IDataQueueHandler
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Determines whether the account can receive market data for the given brokerage symbols,
+    /// reporting the ones it cannot.
+    /// </summary>
+    /// <param name="brokerageSymbols">The brokerage symbols about to be subscribed.</param>
+    /// <returns><c>true</c> when every symbol can be streamed; otherwise <c>false</c></returns>
+    /// <remarks>
+    /// The quotes snapshot answers per symbol, so a subscription that would never receive data, for
+    /// instance a symbol on an exchange the account is not entitled to, fails right away instead of
+    /// leaving the algorithm waiting on a stream that only ever reports the error.
+    /// </remarks>
+    private bool CanReceiveMarketData(IReadOnlyCollection<string> brokerageSymbols)
+    {
+        var symbolsToVerify = brokerageSymbols.Where(symbol => !_marketDataAvailabilityBySymbol.ContainsKey(symbol)).ToList();
+        if (symbolsToVerify.Count > 0)
+        {
+            TradeStationQuoteSnapshot snapshot;
+            try
+            {
+                snapshot = _tradeStationApiClient.GetQuoteSnapshot(string.Join(",", symbolsToVerify)).SynchronouslyAwaitTaskResult();
+            }
+            catch (Exception exception)
+            {
+                // best effort: when the check itself fails let the subscription through so a transient
+                // error does not stop the algorithm, the stream reports any error it runs into
+                Log.Error($"{nameof(TradeStationBrokerage)}.{nameof(CanReceiveMarketData)}: Failed to verify market data for " +
+                    $"'{string.Join(",", symbolsToVerify)}'. Exception: {exception.Message}");
+                return true;
+            }
+
+            foreach (var symbol in symbolsToVerify)
+            {
+                _marketDataAvailabilityBySymbol[symbol] = true;
+            }
+
+            foreach (var error in snapshot.Errors ?? [])
+            {
+                _marketDataAvailabilityBySymbol[error.Symbol] = false;
+                if (_symbolsMarketDataErrorReported.TryAdd(error.Symbol, true))
+                {
+                    OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "MarketDataError",
+                        $"{error.Error} for this symbol: {error.Symbol}"));
+                }
+            }
+        }
+
+        return brokerageSymbols.All(symbol => !_marketDataAvailabilityBySymbol.TryGetValue(symbol, out var isAvailable) || isAvailable);
     }
 
     /// <summary>
