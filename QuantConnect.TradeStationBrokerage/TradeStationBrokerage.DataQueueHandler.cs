@@ -59,6 +59,12 @@ public partial class TradeStationBrokerage : IDataQueueHandler
     private readonly ConcurrentDictionary<Symbol, bool> _symbolsDelayChecked = [];
 
     /// <summary>
+    /// Tracks the brokerage symbols whose market data error has already been reported, so a single
+    /// failing symbol does not raise the same message on every stream reconnection.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, bool> _symbolsMarketDataErrorReported = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Aggregates ticks and bars based on given subscriptions.
     /// </summary>
     protected IDataAggregator _aggregator;
@@ -199,8 +205,19 @@ public partial class TradeStationBrokerage : IDataQueueHandler
     /// Handles incoming quote events and updates the order books accordingly.
     /// </summary>
     /// <param name="quote">The incoming quote containing bid, ask, and trade information.</param>
-    private void HandleQuoteEvents(Quote quote)
+    internal void HandleQuoteEvents(Quote quote)
     {
+        if (!string.IsNullOrEmpty(quote.Error))
+        {
+            // The stream reports a per symbol failure and then sends nothing else for that symbol
+            if (_symbolsMarketDataErrorReported.TryAdd(quote.Symbol, true))
+            {
+                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "MarketDataError",
+                    $"{quote.Error} for this symbol: {quote.Symbol}"));
+            }
+            return;
+        }
+
         if (!_symbolMapper.TryGetLeanSymbol(quote.Symbol, default, default, out var leanSymbol))
         {
             Log.Error($"{nameof(TradeStationBrokerage)}.{nameof(HandleQuoteEvents)}: Failed to map symbol '{quote.Symbol}' from received quote: {quote}.");

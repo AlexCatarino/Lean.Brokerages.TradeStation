@@ -316,11 +316,12 @@ public partial class TradeStationBrokerage : Brokerage
         {
             _tradeStationAccountType = TradeStationExtensions.ParseAccountType(accountType);
             _tradeStationApiClient = new TradeStationApiClient(clientId, clientSecret, restApiUrl,
-                _tradeStationAccountType, refreshToken, redirectUrl, authorizationCode);
+                _tradeStationAccountType, refreshToken, redirectUrl, authorizationCode, OnBrokerageMessageEventHandler);
         }
         else
         {
-            _tradeStationApiClient = new TradeStationApiClient(clientId, clientSecret, restApiUrl, refreshToken, redirectUrl, authorizationCode, accountId);
+            _tradeStationApiClient = new TradeStationApiClient(clientId, clientSecret, restApiUrl, refreshToken, redirectUrl, authorizationCode, accountId,
+                OnBrokerageMessageEventHandler);
             _tradeStationAccountType = _tradeStationApiClient.GetAccountType().SynchronouslyAwaitTaskResult();
             Log.Trace($"{nameof(TradeStationBrokerage)}.{nameof(Initialize)}: AccountID: {accountId} - AccountType: {_tradeStationAccountType}");
         }

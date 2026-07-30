@@ -77,6 +77,44 @@ namespace QuantConnect.Brokerages.TradeStation.Tests
             Assert.That(res.Message, Is.EqualTo("Not entitled to data for this symbol"));
         }
 
+        [Test]
+        public void DeserializeStreamQuoteErrorFrame()
+        {
+            // The streaming quotes endpoint reports a per symbol failure as a regular frame carrying
+            // only the symbol and the error, and then stops sending data for that symbol.
+            var jsonResponse = @"{
+                ""Symbol"": ""VXMQ26"",
+                ""Error"": ""FAILED, NOT ENTITLED""
+            }";
+
+            var res = JsonConvert.DeserializeObject<Quote>(jsonResponse);
+
+            Assert.That(res.Symbol, Is.EqualTo("VXMQ26"));
+            Assert.That(res.Error, Is.EqualTo("FAILED, NOT ENTITLED"));
+            Assert.IsNull(res.Bid);
+            Assert.IsNull(res.Ask);
+            Assert.IsNull(res.Last);
+        }
+
+        [Test]
+        public void StreamQuoteErrorFrameRaisesBrokerageMessageOncePerSymbol()
+        {
+            using var brokerage = TestSetup.CreateBrokerage(null, null);
+
+            var messages = new List<BrokerageMessageEvent>();
+            brokerage.Message += (_, message) => messages.Add(message);
+
+            var errorQuote = new Quote { Symbol = "VXMQ26", Error = "FAILED, NOT ENTITLED" };
+
+            brokerage.HandleQuoteEvents(errorQuote);
+            // the stream is re-established on reconnection: the same failing symbol must not spam the user
+            brokerage.HandleQuoteEvents(errorQuote);
+
+            Assert.That(messages.Count, Is.EqualTo(1));
+            Assert.That(messages[0].Type, Is.EqualTo(BrokerageMessageType.Error));
+            Assert.That(messages[0].Message, Is.EqualTo("FAILED, NOT ENTITLED for this symbol: VXMQ26"));
+        }
+
         [TestCase(@"{ ""Orders"":[ { ""Legs"": [ { ""BuyOrSell"": ""BUY"" } ] } ],""Errors"":[] }", TradeStationTradeActionType.Buy)]
         [TestCase(@"{ ""Orders"":[ { ""Legs"": [ { ""BuyOrSell"": ""Buy"" } ] } ],""Errors"":[] }", TradeStationTradeActionType.Buy)]
         [TestCase(@"{ ""Orders"":[ { ""Legs"": [ { ""BuyOrSell"": ""SELL"" } ] } ],""Errors"":[] }", TradeStationTradeActionType.Sell)]
@@ -276,7 +314,7 @@ namespace QuantConnect.Brokerages.TradeStation.Tests
             var redirectUrl = Config.Get("trade-station-redirect-url");
 
             var tradeStationApiClient = new TradeStationApiClient(clientId, clientSecret, apiUrl, TradeStationAccountType.Margin,
-                string.Empty, redirectUrl, string.Empty);
+                string.Empty, redirectUrl, string.Empty, messageReceived: null);
 
             var signInUrl = tradeStationApiClient.GetSignInUrl();
             Assert.IsNotNull(signInUrl);
@@ -784,10 +822,11 @@ namespace QuantConnect.Brokerages.TradeStation.Tests
                 }
 
                 return new TradeStationApiClient(clientId, clientSecret, apiUrl, TradeStationExtensions.ParseAccountType(accountType), string.Empty,
-                    redirectUrl, authorizationCode);
+                    redirectUrl, authorizationCode, messageReceived: null);
             }
 
-            return new TradeStationApiClient(clientId, clientSecret, apiUrl, TradeStationExtensions.ParseAccountType(accountType), refreshToken, string.Empty, string.Empty);
+            return new TradeStationApiClient(clientId, clientSecret, apiUrl, TradeStationExtensions.ParseAccountType(accountType), refreshToken, string.Empty, string.Empty,
+                messageReceived: null);
         }
     }
 }
