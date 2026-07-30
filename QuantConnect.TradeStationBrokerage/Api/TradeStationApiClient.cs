@@ -40,10 +40,10 @@ namespace QuantConnect.Brokerages.TradeStation.Api;
 public class TradeStationApiClient : IDisposable
 {
     /// <summary>
-    /// Event raised when the API reports a condition the user should be aware of, such as a market
-    /// data request refused for lack of an entitlement.
+    /// Raised when the API reports a condition the user should be aware of, such as a market data
+    /// request refused for lack of an entitlement.
     /// </summary>
-    public event EventHandler<BrokerageMessageEvent> Message;
+    private event EventHandler<BrokerageMessageEvent> MessageReceived;
 
     /// <summary>
     /// Maximum number of bars that can be requested in a single call to <see cref="GetBars(string, TradeStationUnitTimeIntervalType, DateTime, DateTime)"/>.
@@ -102,11 +102,14 @@ public class TradeStationApiClient : IDisposable
     /// <param name="refreshToken">The type of TradeStation account.</param>
     /// <param name="redirectUri">The URI to which the user will be redirected after authentication.</param>
     /// <param name="authorizationCode">The authorization code obtained from the URL during OAuth authentication. Default is an empty string.</param>
-    private TradeStationApiClient(string clientId, string clientSecret, string restApiUrl, string refreshToken, string redirectUri, string authorizationCode)
+    /// <param name="messageReceived">The handler notified of conditions the user should be aware of, such as a market data request refused for lack of an entitlement.</param>
+    private TradeStationApiClient(string clientId, string clientSecret, string restApiUrl, string refreshToken, string redirectUri, string authorizationCode,
+        EventHandler<BrokerageMessageEvent> messageReceived)
     {
         _cliendId = clientId;
         _redirectUri = redirectUri;
         _httpClient = new(restApiUrl, clientId, clientSecret, authorizationCode, redirectUri, refreshToken);
+        MessageReceived += messageReceived;
     }
 
     /// <summary>
@@ -116,10 +119,12 @@ public class TradeStationApiClient : IDisposable
     /// </summary>
     /// <param name="httpClient">The HTTP client wrapper to use for requests.</param>
     /// <param name="accountId">The specific user account id.</param>
-    internal TradeStationApiClient(HttpClientRetryWrapper httpClient, string accountId)
+    /// <param name="messageReceived">The handler notified of conditions the user should be aware of, such as a market data request refused for lack of an entitlement.</param>
+    internal TradeStationApiClient(HttpClientRetryWrapper httpClient, string accountId, EventHandler<BrokerageMessageEvent> messageReceived)
     {
         _httpClient = httpClient;
         _accountID = new Lazy<string>(() => accountId);
+        MessageReceived += messageReceived;
     }
 
     /// <summary>
@@ -132,9 +137,10 @@ public class TradeStationApiClient : IDisposable
     /// <param name="refreshToken">The type of TradeStation account.</param>
     /// <param name="redirectUri">The URI to which the user will be redirected after authentication.</param>
     /// <param name="authorizationCode">The authorization code obtained from the URL during OAuth authentication. Default is an empty string.</param>
+    /// <param name="messageReceived">The handler notified of conditions the user should be aware of, such as a market data request refused for lack of an entitlement.</param>
     public TradeStationApiClient(string clientId, string clientSecret, string restApiUrl, TradeStationAccountType tradeStationAccountType,
-        string refreshToken, string redirectUri, string authorizationCode)
-        : this(clientId, clientSecret, restApiUrl, refreshToken, redirectUri, authorizationCode)
+        string refreshToken, string redirectUri, string authorizationCode, EventHandler<BrokerageMessageEvent> messageReceived)
+        : this(clientId, clientSecret, restApiUrl, refreshToken, redirectUri, authorizationCode, messageReceived)
     {
         _accountID = new Lazy<string>(() =>
         {
@@ -154,8 +160,10 @@ public class TradeStationApiClient : IDisposable
     /// <param name="redirectUri">The URI to which the user will be redirected after authentication.</param>
     /// <param name="authorizationCode">The authorization code obtained from the URL during OAuth authentication. Default is an empty string.</param>
     /// <param name="accountId">The specific user account id.</param>
-    public TradeStationApiClient(string clientId, string clientSecret, string restApiUrl, string refreshToken, string redirectUri, string authorizationCode, string accountId)
-        : this(clientId, clientSecret, restApiUrl, refreshToken, redirectUri, authorizationCode)
+    /// <param name="messageReceived">The handler notified of conditions the user should be aware of, such as a market data request refused for lack of an entitlement.</param>
+    public TradeStationApiClient(string clientId, string clientSecret, string restApiUrl, string refreshToken, string redirectUri, string authorizationCode, string accountId,
+        EventHandler<BrokerageMessageEvent> messageReceived)
+        : this(clientId, clientSecret, restApiUrl, refreshToken, redirectUri, authorizationCode, messageReceived)
     {
         _accountID = new Lazy<string>(() =>
         {
@@ -542,14 +550,10 @@ public class TradeStationApiClient : IDisposable
 
             if (!string.IsNullOrEmpty(result.Error))
             {
-                // TradeStation answers with HTTP 200 and an error body when the bars cannot be served,
-                // for instance "Not entitled to data for this symbol" when the account has no market
-                // data entitlement for the symbol's exchange. Surface it so the user learns why the
-                // history request came back empty, appending the symbol the error refers to.
+                // TradeStation answers with HTTP 200 and an error body when the bars cannot be served
                 Log.Error($"{nameof(TradeStationApiClient)}.{nameof(GetBarsAsync)}: Failed to retrieve bars for symbol '{symbol}' " +
                     $"with time interval '{unitOfTime}'. Start: {firstDate}, End: {lastDate}. [{result.Error}] {result.Message}");
-                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, result.Error,
-                    $"{result.Message}: {symbol}"));
+                MessageReceived?.Invoke(this, new BrokerageMessageEvent(BrokerageMessageType.Error, result.Error, $"{result.Message}: {symbol}"));
                 yield break;
             }
 
@@ -790,15 +794,6 @@ public class TradeStationApiClient : IDisposable
             }
             yield return jsonLine;
         }
-    }
-
-    /// <summary>
-    /// Raises the <see cref="Message"/> event.
-    /// </summary>
-    /// <param name="brokerageMessageEvent">The message to report.</param>
-    private void OnMessage(BrokerageMessageEvent brokerageMessageEvent)
-    {
-        Message?.Invoke(this, brokerageMessageEvent);
     }
 
     /// <summary>

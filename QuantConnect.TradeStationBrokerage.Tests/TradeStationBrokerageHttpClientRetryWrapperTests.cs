@@ -100,7 +100,7 @@ public class TradeStationBrokerageHttpClientRetryWrapperTests
 
             using var wrapper = new HttpClientRetryWrapper(
                 _baseUrl, handler, maxRetries: 1, ctsAttemptTimeout: TimeSpan.FromSeconds(30), backOffDelay: TimeSpan.Zero);
-            using var apiClient = new TradeStationApiClient(wrapper, accountId: "123");
+            using var apiClient = new TradeStationApiClient(wrapper, accountId: "123", messageReceived: null);
 
             Assert.ThrowsAsync<TimeoutException>(async () =>
             {

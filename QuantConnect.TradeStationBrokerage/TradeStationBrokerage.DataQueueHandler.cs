@@ -205,13 +205,11 @@ public partial class TradeStationBrokerage : IDataQueueHandler
     /// Handles incoming quote events and updates the order books accordingly.
     /// </summary>
     /// <param name="quote">The incoming quote containing bid, ask, and trade information.</param>
-    private void HandleQuoteEvents(Quote quote)
+    internal void HandleQuoteEvents(Quote quote)
     {
         if (!string.IsNullOrEmpty(quote.Error))
         {
-            // The stream reports a per symbol failure (e.g. a missing market data entitlement) as a
-            // frame carrying only the symbol and the error, and then sends nothing else for it. Without
-            // surfacing it the algorithm would silently receive no data at all for this symbol.
+            // The stream reports a per symbol failure and then sends nothing else for that symbol
             if (_symbolsMarketDataErrorReported.TryAdd(quote.Symbol, true))
             {
                 OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "MarketDataError",

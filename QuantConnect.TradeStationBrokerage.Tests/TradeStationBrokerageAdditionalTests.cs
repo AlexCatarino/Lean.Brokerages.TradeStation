@@ -15,7 +15,6 @@
 
 using System;
 using System.IO;
-using System.Reflection;
 using System.Linq;
 using Newtonsoft.Json;
 using NUnit.Framework;
@@ -105,14 +104,11 @@ namespace QuantConnect.Brokerages.TradeStation.Tests
             var messages = new List<BrokerageMessageEvent>();
             brokerage.Message += (_, message) => messages.Add(message);
 
-            var handleQuoteEvents = typeof(TradeStationBrokerage)
-                .GetMethod("HandleQuoteEvents", BindingFlags.NonPublic | BindingFlags.Instance);
-
             var errorQuote = new Quote { Symbol = "VXMQ26", Error = "FAILED, NOT ENTITLED" };
 
-            handleQuoteEvents.Invoke(brokerage, [errorQuote]);
+            brokerage.HandleQuoteEvents(errorQuote);
             // the stream is re-established on reconnection: the same failing symbol must not spam the user
-            handleQuoteEvents.Invoke(brokerage, [errorQuote]);
+            brokerage.HandleQuoteEvents(errorQuote);
 
             Assert.That(messages.Count, Is.EqualTo(1));
             Assert.That(messages[0].Type, Is.EqualTo(BrokerageMessageType.Error));
@@ -318,7 +314,7 @@ namespace QuantConnect.Brokerages.TradeStation.Tests
             var redirectUrl = Config.Get("trade-station-redirect-url");
 
             var tradeStationApiClient = new TradeStationApiClient(clientId, clientSecret, apiUrl, TradeStationAccountType.Margin,
-                string.Empty, redirectUrl, string.Empty);
+                string.Empty, redirectUrl, string.Empty, messageReceived: null);
 
             var signInUrl = tradeStationApiClient.GetSignInUrl();
             Assert.IsNotNull(signInUrl);
@@ -826,10 +822,11 @@ namespace QuantConnect.Brokerages.TradeStation.Tests
                 }
 
                 return new TradeStationApiClient(clientId, clientSecret, apiUrl, TradeStationExtensions.ParseAccountType(accountType), string.Empty,
-                    redirectUrl, authorizationCode);
+                    redirectUrl, authorizationCode, messageReceived: null);
             }
 
-            return new TradeStationApiClient(clientId, clientSecret, apiUrl, TradeStationExtensions.ParseAccountType(accountType), refreshToken, string.Empty, string.Empty);
+            return new TradeStationApiClient(clientId, clientSecret, apiUrl, TradeStationExtensions.ParseAccountType(accountType), refreshToken, string.Empty, string.Empty,
+                messageReceived: null);
         }
     }
 }

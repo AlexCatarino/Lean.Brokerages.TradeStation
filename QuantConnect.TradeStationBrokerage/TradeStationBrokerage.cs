@@ -316,19 +316,18 @@ public partial class TradeStationBrokerage : Brokerage
         {
             _tradeStationAccountType = TradeStationExtensions.ParseAccountType(accountType);
             _tradeStationApiClient = new TradeStationApiClient(clientId, clientSecret, restApiUrl,
-                _tradeStationAccountType, refreshToken, redirectUrl, authorizationCode);
+                _tradeStationAccountType, refreshToken, redirectUrl, authorizationCode, OnBrokerageMessageEventHandler);
         }
         else
         {
-            _tradeStationApiClient = new TradeStationApiClient(clientId, clientSecret, restApiUrl, refreshToken, redirectUrl, authorizationCode, accountId);
+            _tradeStationApiClient = new TradeStationApiClient(clientId, clientSecret, restApiUrl, refreshToken, redirectUrl, authorizationCode, accountId,
+                OnBrokerageMessageEventHandler);
             _tradeStationAccountType = _tradeStationApiClient.GetAccountType().SynchronouslyAwaitTaskResult();
             Log.Trace($"{nameof(TradeStationBrokerage)}.{nameof(Initialize)}: AccountID: {accountId} - AccountType: {_tradeStationAccountType}");
         }
 
         _priceMapper = new PriceMapper();
         _messageHandler = new(HandleTradeStationMessage, ConcurrencyEnabled);
-
-        _tradeStationApiClient.Message += OnBrokerageMessageEventHandler;
 
         _aggregator = Composer.Instance.GetPart<IDataAggregator>();
         if (_aggregator == null)
@@ -1546,10 +1545,6 @@ public partial class TradeStationBrokerage : Brokerage
     /// </summary>
     public override void Dispose()
     {
-        if (_tradeStationApiClient != null)
-        {
-            _tradeStationApiClient.Message -= OnBrokerageMessageEventHandler;
-        }
         _aggregator.DisposeSafely();
         _tradeStationApiClient.DisposeSafely();
     }
