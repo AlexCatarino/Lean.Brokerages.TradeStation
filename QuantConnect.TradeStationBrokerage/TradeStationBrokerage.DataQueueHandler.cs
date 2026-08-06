@@ -212,7 +212,15 @@ public partial class TradeStationBrokerage : IDataQueueHandler
             // The stream reports a per symbol failure and then sends nothing else for that symbol
             if (_symbolsMarketDataErrorReported.TryAdd(quote.Symbol, true))
             {
-                OnMessage(new BrokerageMessageEvent(BrokerageMessageType.Error, "MarketDataError",
+                // Only the documented reasons are permanent, so only they stop the algorithm. Anything else, such
+                // as the bare "FAILED" sent on a transient quote server failure, recovers on its own.
+                // Separators are dropped: the stream sends "NOT ENTITLED" where the docs say "EX_NOT_ENTITLED".
+                var reason = quote.Error.Replace("_", string.Empty).Replace(" ", string.Empty);
+                var messageType = reason.Contains("NOTENTITLED", StringComparison.OrdinalIgnoreCase)
+                    || reason.Contains("INVALIDSYMBOL", StringComparison.OrdinalIgnoreCase)
+                    ? BrokerageMessageType.Error
+                    : BrokerageMessageType.Warning;
+                OnMessage(new BrokerageMessageEvent(messageType, "MarketDataError",
                     $"{quote.Error} for this symbol: {quote.Symbol}"));
             }
             return;

@@ -96,23 +96,29 @@ namespace QuantConnect.Brokerages.TradeStation.Tests
             Assert.IsNull(res.Last);
         }
 
-        [Test]
-        public void StreamQuoteErrorFrameRaisesBrokerageMessageOncePerSymbol()
+        // no entitlement and unknown symbol are permanent: the data will never arrive, so they are fatal
+        [TestCase("VXMQ26", "FAILED, NOT ENTITLED", BrokerageMessageType.Error)]
+        [TestCase("VXMQ26", "FAILED, EX_NOT_ENTITLED", BrokerageMessageType.Error)]
+        [TestCase("BADSYMBOL", "FAILED, EX_INVALID_SYMBOL", BrokerageMessageType.Error)]
+        // anything else, such as the bare FAILED sent on a transient quote server failure, must not stop the algorithm
+        [TestCase("UGL", "FAILED", BrokerageMessageType.Warning)]
+        [TestCase("VXX", "Some undocumented error", BrokerageMessageType.Warning)]
+        public void StreamQuoteErrorFrameRaisesBrokerageMessageOncePerSymbol(string symbol, string error, BrokerageMessageType expectedMessageType)
         {
             using var brokerage = TestSetup.CreateBrokerage(null, null);
 
             var messages = new List<BrokerageMessageEvent>();
             brokerage.Message += (_, message) => messages.Add(message);
 
-            var errorQuote = new Quote { Symbol = "VXMQ26", Error = "FAILED, NOT ENTITLED" };
+            var errorQuote = new Quote { Symbol = symbol, Error = error };
 
             brokerage.HandleQuoteEvents(errorQuote);
             // the stream is re-established on reconnection: the same failing symbol must not spam the user
             brokerage.HandleQuoteEvents(errorQuote);
 
             Assert.That(messages.Count, Is.EqualTo(1));
-            Assert.That(messages[0].Type, Is.EqualTo(BrokerageMessageType.Error));
-            Assert.That(messages[0].Message, Is.EqualTo("FAILED, NOT ENTITLED for this symbol: VXMQ26"));
+            Assert.That(messages[0].Type, Is.EqualTo(expectedMessageType));
+            Assert.That(messages[0].Message, Is.EqualTo($"{error} for this symbol: {symbol}"));
         }
 
         [TestCase(@"{ ""Orders"":[ { ""Legs"": [ { ""BuyOrSell"": ""BUY"" } ] } ],""Errors"":[] }", TradeStationTradeActionType.Buy)]
