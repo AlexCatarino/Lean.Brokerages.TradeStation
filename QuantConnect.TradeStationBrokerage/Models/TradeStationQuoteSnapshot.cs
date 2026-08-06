@@ -123,6 +123,7 @@ public class Quote
     /// The stream reports per symbol failures as a regular frame carrying only the symbol and this
     /// field, for example <c>{"Symbol":"VXMQ26","Error":"FAILED, NOT ENTITLED"}</c> when the account
     /// has no market data entitlement for the symbol's exchange. No further frames are sent for it.
+    /// It also sends an undocumented bare <c>FAILED</c> on transient quote server failures.
     /// </remarks>
     public string Error { get; init; }
 
